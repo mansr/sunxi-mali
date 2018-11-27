@@ -1,0 +1,123 @@
+From 9d0a9ca7bc5b29ad07b2fe78fa8da546cdca0e1a Mon Sep 17 00:00:00 2001
+From: Mans Rullgard <mans@mansr.com>
+Date: Tue, 27 Nov 2018 13:05:05 +0000
+Subject: [PATCH] mali: support building against 4.20
+
+---
+ .../mali/linux/mali_memory_block_alloc.c      |  4 ++--
+ src/devicedrv/mali/linux/mali_memory_cow.c    |  8 ++++----
+ .../mali/linux/mali_memory_os_alloc.c         | 20 +++++++++----------
+ src/devicedrv/mali/linux/mali_memory_secure.c |  4 ++--
+ src/devicedrv/mali/linux/mali_osk_time.c      |  6 +++---
+ 5 files changed, 21 insertions(+), 21 deletions(-)
+
+diff --git a/src/devicedrv/mali/linux/mali_memory_block_alloc.c b/src/devicedrv/mali/linux/mali_memory_block_alloc.c
+index deb2ee84f6e5..411930596fae 100755
+--- a/src/devicedrv/mali/linux/mali_memory_block_alloc.c
++++ b/src/devicedrv/mali/linux/mali_memory_block_alloc.c
+@@ -309,9 +309,9 @@ int mali_mem_block_cpu_map(mali_mem_backend *mem_bkend, struct vm_area_struct *v
+ 
+ 	list_for_each_entry(m_page, &block_mem->pfns, list) {
+ 		MALI_DEBUG_ASSERT(m_page->type == MALI_PAGE_NODE_BLOCK);
+-		ret = vm_insert_pfn(vma, addr, _mali_page_node_get_pfn(m_page));
++		ret = vmf_insert_pfn(vma, addr, _mali_page_node_get_pfn(m_page));
+ 
+-		if (unlikely(0 != ret)) {
++		if (unlikely(ret & VM_FAULT_ERROR)) {
+ 			return -EFAULT;
+ 		}
+ 		addr += _MALI_OSK_MALI_PAGE_SIZE;
+diff --git a/src/devicedrv/mali/linux/mali_memory_cow.c b/src/devicedrv/mali/linux/mali_memory_cow.c
+index 54c66b817d66..aaab6d24efb5 100755
+--- a/src/devicedrv/mali/linux/mali_memory_cow.c
++++ b/src/devicedrv/mali/linux/mali_memory_cow.c
+@@ -532,9 +532,9 @@ int mali_mem_cow_cpu_map(mali_mem_backend *mem_bkend, struct vm_area_struct *vma
+ 		 * flush which makes it way slower than remap_pfn_range or vm_insert_pfn.
+ 		ret = vm_insert_page(vma, addr, page);
+ 		*/
+-		ret = vm_insert_pfn(vma, addr, _mali_page_node_get_pfn(m_page));
++		ret = vmf_insert_pfn(vma, addr, _mali_page_node_get_pfn(m_page));
+ 
+-		if (unlikely(0 != ret)) {
++		if (unlikely(ret & VM_FAULT_ERROR)) {
+ 			return ret;
+ 		}
+ 		addr += _MALI_OSK_MALI_PAGE_SIZE;
+@@ -569,9 +569,9 @@ _mali_osk_errcode_t mali_mem_cow_cpu_map_pages_locked(mali_mem_backend *mem_bken
+ 
+ 	list_for_each_entry(m_page, &cow->pages, list) {
+ 		if ((count >= offset) && (count < offset + num)) {
+-			ret = vm_insert_pfn(vma, vaddr, _mali_page_node_get_pfn(m_page));
++			ret = vmf_insert_pfn(vma, vaddr, _mali_page_node_get_pfn(m_page));
+ 
+-			if (unlikely(0 != ret)) {
++			if (unlikely(ret & VM_FAULT_ERROR)) {
+ 				if (count == offset) {
+ 					return _MALI_OSK_ERR_FAULT;
+ 				} else {
+diff --git a/src/devicedrv/mali/linux/mali_memory_os_alloc.c b/src/devicedrv/mali/linux/mali_memory_os_alloc.c
+index 7f229eb413f7..0ed671ea68a3 100755
+--- a/src/devicedrv/mali/linux/mali_memory_os_alloc.c
++++ b/src/devicedrv/mali/linux/mali_memory_os_alloc.c
+@@ -364,9 +364,9 @@ int mali_mem_os_cpu_map(mali_mem_backend *mem_bkend, struct vm_area_struct *vma)
+ 		ret = vm_insert_page(vma, addr, page);
+ 		*/
+ 		page = m_page->page;
+-		ret = vm_insert_pfn(vma, addr, page_to_pfn(page));
++		ret = vmf_insert_pfn(vma, addr, page_to_pfn(page));
+ 
+-		if (unlikely(0 != ret)) {
++		if (unlikely(ret & VM_FAULT_ERROR)) {
+ 			return -EFAULT;
+ 		}
+ 		addr += _MALI_OSK_MALI_PAGE_SIZE;
+@@ -402,11 +402,11 @@ _mali_osk_errcode_t mali_mem_os_resize_cpu_map_locked(mali_mem_backend *mem_bken
+ 
+ 			vm_end -= _MALI_OSK_MALI_PAGE_SIZE;
+ 			if (mapping_page_num > 0) {
+-				ret = vm_insert_pfn(vma, vm_end, page_to_pfn(m_page->page));
++				ret = vmf_insert_pfn(vma, vm_end, page_to_pfn(m_page->page));
+ 
+-				if (unlikely(0 != ret)) {
+-					/*will return -EBUSY If the page has already been mapped into table, but it's OK*/
+-					if (-EBUSY == ret) {
++				if (unlikely(ret & VM_FAULT_ERROR)) {
++					/*will return VM_FAULT_NOPAGE If the page has already been mapped into table, but it's OK*/
++					if (VM_FAULT_NOPAGE == ret) {
+ 						break;
+ 					} else {
+ 						MALI_DEBUG_PRINT(1, ("OS Mem: mali_mem_os_resize_cpu_map_locked failed, ret = %d, offset is %d,page_count is %d\n",
+@@ -425,11 +425,11 @@ _mali_osk_errcode_t mali_mem_os_resize_cpu_map_locked(mali_mem_backend *mem_bken
+ 		list_for_each_entry(m_page, &os_mem->pages, list) {
+ 			if (count >= offset) {
+ 
+-				ret = vm_insert_pfn(vma, vstart, page_to_pfn(m_page->page));
++				ret = vmf_insert_pfn(vma, vstart, page_to_pfn(m_page->page));
+ 
+-				if (unlikely(0 != ret)) {
+-					/*will return -EBUSY If the page has already been mapped into table, but it's OK*/
+-					if (-EBUSY == ret) {
++				if (unlikely(ret & VM_FAULT_ERROR)) {
++					/*will return VM_FAULT_NOPAGE If the page has already been mapped into table, but it's OK*/
++					if (VM_FAULT_NOPAGE == ret) {
+ 						break;
+ 					} else {
+ 						MALI_DEBUG_PRINT(1, ("OS Mem: mali_mem_os_resize_cpu_map_locked failed, ret = %d, count is %d, offset is %d,page_count is %d\n",
+diff --git a/src/devicedrv/mali/linux/mali_osk_time.c b/src/devicedrv/mali/linux/mali_osk_time.c
+index 76876b61834f..7ab4d5e7be9e 100755
+--- a/src/devicedrv/mali/linux/mali_osk_time.c
++++ b/src/devicedrv/mali/linux/mali_osk_time.c
+@@ -53,7 +53,7 @@ u64 _mali_osk_time_get_ns(void)
+ 
+ u64 _mali_osk_boot_time_get_ns(void)
+ {
+-	struct timespec tsval;
+-	get_monotonic_boottime(&tsval);
+-	return (u64)timespec_to_ns(&tsval);
++	struct timespec64 tsval;
++	ktime_get_boottime_ts64(&tsval);
++	return timespec64_to_ns(&tsval);
+ }
+-- 
+2.19.2
+
